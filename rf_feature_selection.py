@@ -4,7 +4,18 @@ import os, re, json, ast, copy
 from collections import defaultdict,Counter
 from joblib import Parallel, delayed
 from scipy.stats import pearsonr
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import KFold
+from scipy.stats import pearsonr
+from sklearn.metrics import mean_squared_error as cal_mse
+from sklearn.metrics import r2_score
+cal_rmse = lambda y, y_pred: round(cal_mse(y, y_pred)**0.5,4)
+cal_pcc = lambda y, y_pred: round(pearsonr(y, y_pred)[0],4)
+cal_r2 = lambda y, y_pred: round(r2_score(y, y_pred),4)
 rfg = RandomForestRegressor(n_estimators=100,random_state=10,oob_score=True)
 
 def cal_rfg_pcc_oob(train_set, base, y_name):
@@ -83,3 +94,13 @@ class forward_feature_selection(object):
 
     def parallel_select(self):
         Parallel(n_jobs=self.num_worker)(delayed(self._select_feature)(base_fea) for base_fea in self.base_fea_list)
+
+
+def my_metrics(task, y, y_pred):
+    if task=='regression':
+        pcc = cal_pcc(y, y_pred)
+        r2 = cal_r2(y, y_pred)
+        rmse = cal_rmse(y, y_pred)
+        return pcc, r2, rmse
+    else:
+        return 1

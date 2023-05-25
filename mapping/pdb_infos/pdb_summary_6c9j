@@ -1,0 +1,2 @@
+title	experimental_method	number_of_entities	assemblies	pdb_id
+AMP-activated protein kinase bound to pharmacological activator R734	X-ray diffraction	{'polypeptide': 3, 'dna': 0, 'ligand': 3, 'dna/rna': 0, 'rna': 0, 'sugar': 0, 'water': 0, 'other': 0, 'carbohydrate_polymer': 0}	[{'assembly_id': '1', 'form': 'hetero', 'preferred': True, 'name': 'trimer'}]	6c9j

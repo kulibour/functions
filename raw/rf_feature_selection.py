@@ -23,8 +23,9 @@ def cal_rfg_pcc_oob(train_set, base, y_name):
     train_y = np.array(train_set[y_name])
     model_fit = rfg.fit(train_x,train_y)
     fea_importance = model_fit.feature_importances_[-1]
-    pcc_oob,pvalue = pearsonr(train_y,model_fit.oob_prediction_)
+    pcc_oob = cal_pcc(train_y,model_fit.oob_prediction_)
     return pcc_oob,fea_importance
+
 
 class forward_feature_selection(object):
     def __init__(self, workdir, train_set, base_fea_list, features, y_name, cate, num_worker=10):

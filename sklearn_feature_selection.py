@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
-import os, re, json, ast, copy
+import os, re, json, ast, copy, pickle
 from collections import defaultdict,Counter
 from joblib import Parallel, delayed
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.model_selection import train_test_split, KFold
@@ -17,31 +19,32 @@ cal_r2 = lambda y, y_pred: round(r2_score(y, y_pred),4)
 
 class filter_features(object):
     def __init__(self, feature_file, workdir, cate='descriptors', num_worker=5):
-        self.dataset_features = pd.read_csv(f'{workdir}info/{feature_file}',sep='\t')
+        self.dataset_features = pd.read_csv(f'{workdir}info/{feature_file}',sep='\t',low_memory=False)
         self.feature_names = list(self.dataset_features)[1:]
         self.num_worker = num_worker
         self.workdir = workdir
         self.cate = cate
         os.makedirs(f'{self.workdir}info',exist_ok=True)
         os.makedirs(f'{self.workdir}plot',exist_ok=True)
-    
-    def nan_filter(self):
+
+    def value_filter(self):
         ##NaN value
-        dataset_fea_nan_names = []
+        dataset_fea_val_names = []
         for name in self.feature_names:
-            if set(self.dataset_features[name].isna())=={False}:
-                dataset_fea_nan_names.append(name)
-        np.save(f'{self.workdir}info/dataset_{self.cate}_nan_names.npy',dataset_fea_nan_names)
-        self.dataset_fea_nan = self.dataset_features[['unique_id']+dataset_fea_nan_names]
-        self.dataset_fea_nan_names = dataset_fea_nan_names
+            if self.dataset_features[name].dtype in [np.dtype('float'),np.dtype('int'),np.dtype('bool')]:
+                if set(self.dataset_features[name].isna())=={False}:
+                    dataset_fea_val_names.append(name)
+        np.save(f'{self.workdir}info/dataset_{self.cate}_val_names.npy',dataset_fea_val_names)
+        self.dataset_fea_val = self.dataset_features[['unique_id']+dataset_fea_val_names]
+        self.dataset_fea_val_names = dataset_fea_val_names
 
     def variance_filter(self):
         ###Variance
         var_filter = VarianceThreshold()
-        dataset_fea_var_values = var_filter.fit_transform(self.dataset_fea_nan.iloc[:,1:])
-        self.dataset_fea_var_names = var_filter.get_feature_names_out(self.dataset_fea_nan_names)
+        dataset_fea_var_values = var_filter.fit_transform(self.dataset_fea_val.iloc[:,1:])
+        self.dataset_fea_var_names = var_filter.get_feature_names_out(self.dataset_fea_val_names)
         dataset_fea_var = pd.DataFrame(dataset_fea_var_values,columns=self.dataset_fea_var_names)
-        dataset_fea_var['unique_id'] = list(self.dataset_fea_nan['unique_id'])
+        dataset_fea_var['unique_id'] = list(self.dataset_fea_val['unique_id'])
         dataset_fea_var = dataset_fea_var[['unique_id']+list(self.dataset_fea_var_names)]
         np.save(f'{self.workdir}info/dataset_{self.cate}_var_names.npy',self.dataset_fea_var_names)
         self.dataset_fea_var = dataset_fea_var
@@ -96,7 +99,7 @@ class filter_features(object):
         np.save(f'{self.workdir}info/dataset_{self.cate}_clu_names.npy',dataset_fea_clu_names)
         self.dataset_fea_clu_names = dataset_fea_clu_names
 
-def cal_rfr_r2_oob(model, train_set, base, y_name):
+def cal_rfr_oob_r2(model, train_set, base, y_name):
     train_x = np.array(train_set[base])
     train_y = np.array(train_set[y_name])
     model_fit = model.fit(train_x,train_y)
@@ -104,7 +107,7 @@ def cal_rfr_r2_oob(model, train_set, base, y_name):
     r2_oob = cal_r2(train_y,model_fit.oob_prediction_)
     return r2_oob,fea_importance
 
-def model_kfold_cv(model, train_set, base, y_name, k=5):
+def model_kfold_cv_r2(model, train_set, base, y_name, k=5):
     train_x = np.array(train_set[base])
     train_y = np.array(train_set[y_name])
     model_fit = model.fit(train_x,train_y)
@@ -119,6 +122,22 @@ def model_kfold_cv(model, train_set, base, y_name, k=5):
         score_list.append(score)
     return np.array(score_list).mean(),fea_importance
 
+def model_kfold_cv_pcc(model, train_set, base, y_name, k=5):
+    train_x = np.array(train_set[base])
+    train_y = np.array(train_set[y_name])
+    model_fit = model.fit(train_x,train_y)
+    fea_importance = model_fit.feature_importances_[-1]
+    score_list = []
+    cv = KFold(n_splits=5, shuffle=True, random_state=10)
+    for idx_train,idx_test in cv.split(train_x):
+        x_train,y_train = train_x[idx_train],train_y[idx_train]
+        x_test,y_test = train_x[idx_test],train_y[idx_test]
+        model_fit = model.fit(x_train,y_train)
+        y_test_pred = model_fit.predict(x_test)
+        score = cal_pcc(y_test,y_test_pred)
+        score_list.append(score)
+    return np.array(score_list).mean(),fea_importance
+
 class forward_feature_selection(object):
     def __init__(self, workdir, train_set, base_fea_list, features, y_name, model_type, eval_type,num_worker=10):
         self.num_worker = num_worker
@@ -130,13 +149,15 @@ class forward_feature_selection(object):
         self.model_type = model_type
         self.eval_type = eval_type
         if self.model_type=='xgbr':
-            self.model = XGBRegressor(random_state=10)
+            self.model = XGBRegressor(eta=0.1,n_jobs=1,nthread=1)
         if self.model_type=='rfr':
             self.model = RandomForestRegressor(random_state=10,oob_score=True)
         if self.eval_type=='oob':
-            self.features_eval = cal_rfr_r2_oob
-        if self.eval_type=='kfold':
-            self.features_eval = model_kfold_cv
+            self.features_eval = cal_rfr_oob_r2
+        if self.eval_type=='kfold_r2':
+            self.features_eval = model_kfold_cv_r2
+        if self.eval_type=='kfold_pcc':
+            self.features_eval = model_kfold_cv_pcc
 
     def _filter_and_select(self, candidate_data, criter_value):
         if candidate_data.shape[0]>0:
